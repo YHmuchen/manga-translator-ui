@@ -15,6 +15,7 @@ from manga_translator.utils.path_manager import (
     find_json_path,
     find_paint_overlay_path,
     find_work_image_path,
+    get_inpainted_path,
     resolve_original_image_path,
 )
 
@@ -251,6 +252,45 @@ class EditorControllerDocumentService:
                     except Exception as e:
                         self.logger.error(f"Error loading inpainted image: {e}")
                         inpainted_path = None
+                elif raw_mask is not None and regions:
+                    # Run inpainting in background thread before showing the page,
+                    # avoids briefly displaying "old image + new mask" composite.
+                    try:
+                        import asyncio
+                        import numpy as np
+                        import torch
+                        from manga_translator.config import Inpainter, InpainterConfig, InpaintPrecision
+                        from manga_translator.inpainting import dispatch as inpaint_dispatch
+                        cfg = get_config_service().get_config()
+                        ic = InpainterConfig()
+                        ic.inpainting_precision = InpaintPrecision(cfg.inpainter.inpainting_precision)
+                        ic.force_use_torch_inpainting = cfg.inpainter.force_use_torch_inpainting
+                        try:
+                            ik = Inpainter(cfg.inpainter.inpainter)
+                        except ValueError:
+                            ik = Inpainter.lama_large
+                        device = "cuda" if cfg.cli.use_gpu and torch.cuda.is_available() else "cpu"
+                        m = np.asarray(raw_mask)
+                        if m.ndim == 3:
+                            m = m[:, :, 0]
+                        m = np.where(m > 0, 255, 0).astype(np.uint8)
+                        img_np = np.asarray(image)
+                        if img_np.ndim == 3 and img_np.shape[2] == 4:
+                            img_np = img_np[:, :, :3]
+                        inpainted_np = asyncio.run(inpaint_dispatch(
+                            inpainter_key=ik, image=img_np, mask=m,
+                            config=ic, inpainting_size=cfg.inpainter.inpainting_size,
+                            device=device,
+                        ))
+                        if inpainted_np is not None:
+                            inpainted_image = inpainted_np
+                            from manga_translator.utils import save_pil_image
+                            ip = get_inpainted_path(source_path, create_dir=True)
+                            save_pil_image(inpainted_np, ip)
+                            inpainted_path = ip
+                            self.logger.info(f"Generated inpainted on load: {ip}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to generate inpainted on load: {e}", exc_info=True)
 
                 paint_overlay_path = find_paint_overlay_path(source_path)
                 paint_overlay_image = None
