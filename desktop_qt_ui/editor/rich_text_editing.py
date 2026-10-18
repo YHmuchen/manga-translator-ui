@@ -594,6 +594,8 @@ class StyledTextSegment:
     ruby_text: str = ""
     node_start: int | None = None
     node_end: int | None = None
+    # 选区检视器合并出的片段：只展示所有 run 共有的样式键。
+    merged: bool = False
 
 
 def styled_segments_for_range(
@@ -693,6 +695,57 @@ def styled_segments_for_range(
 
     finish_current()
     return segments
+
+
+def merge_selection_segment(
+    document: dict, start: int, end: int
+) -> StyledTextSegment | None:
+    """把选区合并成一个“选区”片段，仅保留选区中**每个可见字符**都具备的样式。
+
+    富文本文档必须按样式切分 run（例如 ``[``/``]`` 带旋转、正文不带），但
+    选区检视器不需要把每个 run 都摊成一张卡片。只展示所有字符共有的样式
+    键：编辑这些键会作用于整个选区，也不会误改只存在于部分 run 上的旋转、
+    位移等样式。没有任何共有样式时返回 None，调用方继续按 run 展示。
+    """
+    entries = _visible_entries(document)
+    start, end = _normalize_range(entries, start, end, expand_empty=False)
+    visible = [entry for entry in entries[start:end] if entry.char != "\n"]
+    if not visible:
+        return None
+    if any(
+        isinstance(entry.node, dict) and entry.node.get("type") in {"ruby", "tcy"}
+        for entry in visible
+    ):
+        # Ruby/TCY 的说明行依赖节点类型，合并会丢失这些控件，保持按 run 展示。
+        return None
+
+    styles = [entry.style or {} for entry in visible]
+    common_keys = set(styles[0])
+    for style in styles[1:]:
+        common_keys &= set(style)
+    if not common_keys:
+        return None
+
+    merged: dict[str, Any] = {}
+    for key in common_keys:
+        value = styles[0][key]
+        if isinstance(value, dict):
+            sub_keys = set(value)
+            for style in styles[1:]:
+                nested = style.get(key)
+                sub_keys &= set(nested) if isinstance(nested, dict) else set()
+            value = {
+                sub_key: copy.deepcopy(value[sub_key]) for sub_key in sub_keys
+            }
+            if not value:
+                continue
+        else:
+            value = copy.deepcopy(value)
+        merged[key] = value
+
+    return StyledTextSegment(
+        start, end, "".join(entry.char for entry in visible), merged, merged=True
+    )
 
 
 def selected_range_from_editor(text_edit) -> tuple[int, int]:

@@ -20,6 +20,7 @@ from editor.rich_text_editing import (
     apply_style_to_range,
     apply_tcy_to_range,
     clear_styles_from_range,
+    merge_selection_segment,
     remove_ruby_from_range,
     remove_tcy_from_range,
     style_for_range,
@@ -761,6 +762,21 @@ class RichTextFloatingEditor(SimpleCardWidget):
                 end,
                 expand_empty=True,
             )
+            # 选区跨多个 run（例如「[」「鬼歇」「]」「之魔人」，括号带旋转）时，
+            # 不要为每个 run 各建一张样式卡片；合并成一张“选区”卡片，只展示
+            # 所有 run 共有的样式键。文档本身仍保留 run 切分，渲染不受影响。
+            if (
+                len(segments) > 1
+                and start < end
+                and all(segment.node_type is None for segment in segments)
+                and self._state.ruby_draft is None
+                and self._state.pending_style_edit is None
+            ):
+                merged_segment = merge_selection_segment(
+                    self._state.document, start, end
+                )
+                if merged_segment is not None:
+                    segments = [merged_segment]
             ruby_draft = None
             if self._state.ruby_draft is not None:
                 draft = self._state.ruby_draft
