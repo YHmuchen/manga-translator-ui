@@ -700,12 +700,12 @@ def styled_segments_for_range(
 def merge_selection_segment(
     document: dict, start: int, end: int
 ) -> StyledTextSegment | None:
-    """把选区合并成一个“选区”片段，仅保留选区中**每个可见字符**都具备的样式。
+    """把选区合并成一个“选区”片段，保留选区中出现过的样式键（并集）。
 
     富文本文档必须按样式切分 run（例如 ``[``/``]`` 带旋转、正文不带），但
-    选区检视器不需要把每个 run 都摊成一张卡片。只展示所有字符共有的样式
-    键：编辑这些键会作用于整个选区，也不会误改只存在于部分 run 上的旋转、
-    位移等样式。没有任何共有样式时返回 None，调用方继续按 run 展示。
+    选区检视器不需要把每个 run 都摊成一张卡片。卡片展示并集，编辑某个键时
+    只作用于选区中确实带有该键的子区间（见 ``apply_style_to_range`` 的调用
+    方），因此改旋转不会转动正文，改模糊也不会被旋转 run 阻断。
     """
     entries = _visible_entries(document)
     start, end = _normalize_range(entries, start, end, expand_empty=False)
@@ -719,29 +719,14 @@ def merge_selection_segment(
         # Ruby/TCY 的说明行依赖节点类型，合并会丢失这些控件，保持按 run 展示。
         return None
 
-    styles = [entry.style or {} for entry in visible]
-    common_keys = set(styles[0])
-    for style in styles[1:]:
-        common_keys &= set(style)
-    if not common_keys:
-        return None
-
     merged: dict[str, Any] = {}
-    for key in common_keys:
-        value = styles[0][key]
-        if isinstance(value, dict):
-            sub_keys = set(value)
-            for style in styles[1:]:
-                nested = style.get(key)
-                sub_keys &= set(nested) if isinstance(nested, dict) else set()
-            value = {
-                sub_key: copy.deepcopy(value[sub_key]) for sub_key in sub_keys
-            }
-            if not value:
-                continue
-        else:
-            value = copy.deepcopy(value)
-        merged[key] = value
+    for entry in visible:
+        for key, value in (entry.style or {}).items():
+            if key not in merged:
+                merged[key] = copy.deepcopy(value)
+            elif isinstance(merged[key], dict) and isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    merged[key].setdefault(sub_key, copy.deepcopy(sub_value))
 
     return StyledTextSegment(
         start, end, "".join(entry.char for entry in visible), merged, merged=True
