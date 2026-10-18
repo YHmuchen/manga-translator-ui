@@ -590,11 +590,6 @@ class StyleRunCard(SimpleCardWidget):
         clear_styles.setFixedSize(28, 30)
         set_hover_hint(clear_styles, _tr("Clear all styles from this text"))
         clear_styles.setAccessibleName(_tr("Clear all styles from this text"))
-        if getattr(segment, "merged", False):
-            # 选区卡片可能跨多个 run：保存预设只适用于单个 run；清空全部样式
-            # 还会误删只存在于部分 run 上的旋转等样式。只保留逐行删除。
-            save_preset.setVisible(False)
-            clear_styles.setVisible(False)
         header_layout.addWidget(self.header, 1)
         header_layout.addWidget(save_preset)
         header_layout.addWidget(clear_styles)

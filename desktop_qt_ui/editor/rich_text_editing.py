@@ -594,8 +594,6 @@ class StyledTextSegment:
     ruby_text: str = ""
     node_start: int | None = None
     node_end: int | None = None
-    # 选区检视器合并出的片段：只展示所有 run 共有的样式键。
-    merged: bool = False
 
 
 def styled_segments_for_range(
@@ -695,42 +693,6 @@ def styled_segments_for_range(
 
     finish_current()
     return segments
-
-
-def merge_selection_segment(
-    document: dict, start: int, end: int
-) -> StyledTextSegment | None:
-    """把选区合并成一个“选区”片段，保留选区中出现过的样式键（并集）。
-
-    富文本文档必须按样式切分 run（例如 ``[``/``]`` 带旋转、正文不带），但
-    选区检视器不需要把每个 run 都摊成一张卡片。卡片展示并集，编辑某个键时
-    只作用于选区中确实带有该键的子区间（见 ``apply_style_to_range`` 的调用
-    方），因此改旋转不会转动正文，改模糊也不会被旋转 run 阻断。
-    """
-    entries = _visible_entries(document)
-    start, end = _normalize_range(entries, start, end, expand_empty=False)
-    visible = [entry for entry in entries[start:end] if entry.char != "\n"]
-    if not visible:
-        return None
-    if any(
-        isinstance(entry.node, dict) and entry.node.get("type") in {"ruby", "tcy"}
-        for entry in visible
-    ):
-        # Ruby/TCY 的说明行依赖节点类型，合并会丢失这些控件，保持按 run 展示。
-        return None
-
-    merged: dict[str, Any] = {}
-    for entry in visible:
-        for key, value in (entry.style or {}).items():
-            if key not in merged:
-                merged[key] = copy.deepcopy(value)
-            elif isinstance(merged[key], dict) and isinstance(value, dict):
-                for sub_key, sub_value in value.items():
-                    merged[key].setdefault(sub_key, copy.deepcopy(sub_value))
-
-    return StyledTextSegment(
-        start, end, "".join(entry.char for entry in visible), merged, merged=True
-    )
 
 
 def selected_range_from_editor(text_edit) -> tuple[int, int]:

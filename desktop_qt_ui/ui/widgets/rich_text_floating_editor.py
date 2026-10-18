@@ -20,7 +20,6 @@ from editor.rich_text_editing import (
     apply_style_to_range,
     apply_tcy_to_range,
     clear_styles_from_range,
-    merge_selection_segment,
     remove_ruby_from_range,
     remove_tcy_from_range,
     style_for_range,
@@ -48,7 +47,6 @@ from .rich_text_editor_components import (
     StyledRunList,
     clear_style_patch,
     default_style_patch,
-    style_keys_for_segment,
 )
 
 
@@ -468,27 +466,6 @@ class RichTextFloatingEditor(SimpleCardWidget):
             return
         self._apply_style_to_explicit_range(start, end, key, patch)
 
-    def _style_edit_targets(
-        self, start: int, end: int, key: str
-    ) -> list[tuple[int, int]]:
-        """选区合并卡片上的某个样式键应落到哪些子区间。
-
-        键已经存在于部分 run 时，只改这些 run（例如 Rot 只改括号、BL 只改
-        已有模糊的片段）；键还不存在时改整个选区；所有 run 都有该键时整段
-        一次改完。
-        """
-        segments = styled_segments_for_range(
-            self._state.document, start, end, expand_empty=False
-        )
-        if not segments:
-            return [(int(start), int(end))]
-        matching = [
-            segment for segment in segments if key in style_keys_for_segment(segment)
-        ]
-        if not matching or len(matching) == len(segments):
-            return [(int(start), int(end))]
-        return [(segment.start, segment.end) for segment in matching]
-
     def _apply_style_to_explicit_range(
         self,
         start: int,
@@ -498,11 +475,7 @@ class RichTextFloatingEditor(SimpleCardWidget):
     ) -> None:
         if self._updating or not self._state.has_region or start >= end:
             return
-        document = self._state.document
-        for target_start, target_end in self._style_edit_targets(start, end, key):
-            document = apply_style_to_range(
-                document, target_start, target_end, patch
-            )
+        document = apply_style_to_range(self._state.document, start, end, patch)
         if (
             key in {"I", "Rot", "K", "PK", "XY"}
             and patch != clear_style_patch(key)
@@ -534,13 +507,7 @@ class RichTextFloatingEditor(SimpleCardWidget):
             patch = clear_style_patch(key)
             if not patch:
                 return
-            document = self._state.document
-            for target_start, target_end in self._style_edit_targets(
-                start, end, key
-            ):
-                document = apply_style_to_range(
-                    document, target_start, target_end, patch
-                )
+            document = apply_style_to_range(self._state.document, start, end, patch)
         self._commit_document(document)
 
     # ------------------------------------------------------------------
@@ -794,21 +761,6 @@ class RichTextFloatingEditor(SimpleCardWidget):
                 end,
                 expand_empty=True,
             )
-            # 选区跨多个 run（例如「[」「鬼歇」「]」「之魔人」，括号带旋转）时，
-            # 不要为每个 run 各建一张样式卡片；合并成一张“选区”卡片，只展示
-            # 所有 run 共有的样式键。文档本身仍保留 run 切分，渲染不受影响。
-            if (
-                len(segments) > 1
-                and start < end
-                and all(segment.node_type is None for segment in segments)
-                and self._state.ruby_draft is None
-                and self._state.pending_style_edit is None
-            ):
-                merged_segment = merge_selection_segment(
-                    self._state.document, start, end
-                )
-                if merged_segment is not None:
-                    segments = [merged_segment]
             ruby_draft = None
             if self._state.ruby_draft is not None:
                 draft = self._state.ruby_draft
